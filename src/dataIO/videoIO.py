@@ -1,5 +1,7 @@
-import traceback
+import sys
 import math
+import warnings
+
 
 import imageio
 
@@ -14,10 +16,7 @@ class VideoReader:
             self.video_filename = video_filename
             self.video_reader = imageio.get_reader(self.video_filename, format="ffmpeg")
         except Exception:
-            print("Could not initialise the video reader!")
-            print("Video filename: {}".format(video_filename))
-            traceback.print_exc()
-            raise
+            raise sys.exc_info()
 
         # Extract and store metadata related to the video
         self._extract_video_metadata()
@@ -33,7 +32,7 @@ class VideoReader:
 
         self.vid_metadata = self.video_reader.get_meta_data()
 
-        self.frame_height, self.frame_width = self.vid_metadata["size"]
+        self.frame_width, self.frame_height = self.vid_metadata["size"]
         self.vid_fps = self.vid_metadata["fps"]
         self.vid_duration_time = self.vid_metadata["duration"]
 
@@ -53,48 +52,47 @@ class VideoReader:
 
                 # If none of these work, return an Error
                 if (self.vid_num_frames == 0) or (math.isinf(self.vid_num_frames)):
-                    print("Could not extract number of frames in the video")
-                    print("Video filename: {}".format(self.video_filename))
-                    raise
+                    raise Exception("Could not extract number of frames in the video: {}".format(self.video_filename))
 
         return
 
     def get_frame_by_index(self, frame_index):
-        assert frame_index < self.vid_num_frames, "Trying to get frame {}, but number of frames in video is {}".format(frame_index, self.vid_num_frames)
+        frame = None
+        success = False
 
-        frame = self.video_reader.get_data(frame_index)
+        if not isinstance(frame_index, int):
+            raise Exception("Illegal frame index: {}".format(frame_index))
 
-        self.curr_frame_index = self.video_reader._pos
-        self.curr_time_instant = float(self.curr_frame_index) / self.vid_fps
 
-        return frame
+        if (frame_index < 0) or (frame_index >= self.vid_num_frames):
+            warnings.warn("Trying to get frame {}, but index should be in [0, {}]".format(frame_index, self.vid_num_frames))
+        else:
+            frame = self.video_reader.get_data(frame_index)
 
-    def get_frame_by_time(self, target_time):
-        assert target_time < self.vid_duration_time, "Trying to get frame at time {}, but video duration is {}".format(target_time, self.vid_duration_time)
-
-        target_frame_index = math.floor(target_time * self.vid_fps)
-        frame = self.get_frame_by_index(target_frame_index)
-
-        return frame
-
-    def advance_frame_by_index(self, increment=1):
-        try:
-            frame = self.get_frame_by_index(self.curr_frame_index + increment)
+            self.curr_frame_index = self.video_reader._pos
+            self.curr_time_instant = float(self.curr_frame_index) / self.vid_fps
             success = True
-        except Exception:
-            frame = None
-            success = False
 
         return success, frame
 
-    def advance_frame_by_time(self, increment=1.0):
-        try:
-            frame = self.get_frame_by_time(self.curr_time_instant + increment)
-            success = True
-        except Exception:
-            frame = None
-            success = False
+    def get_frame_by_time(self, target_time):
+        frame = None
+        success = False
 
+        if (target_time < 0.0) or (target_time >= self.vid_duration_time):
+            warnings.warn("Trying to get frame at time {}, but video time is limited to [0, {}]".format(target_time, self.vid_duration_time))
+        else:
+            target_frame_index = math.floor(target_time * self.vid_fps)
+            success, frame = self.get_frame_by_index(target_frame_index)
+
+        return success, frame
+
+    def advance_frame_by_index(self, increment=1):
+        success, frame = self.get_frame_by_index(self.curr_frame_index + increment)
+        return success, frame
+
+    def advance_frame_by_time(self, increment=1.0):
+        success, frame = self.get_frame_by_time(self.curr_time_instant + increment)
         return success, frame
 
     def close_reader(self):
@@ -118,6 +116,7 @@ class VideoSampler(VideoReader):
         self.end_time = None
 
         self.sample_step = None
+        self.sample_time_diff = None
         self.num_samples = None
         self.curr_sample_index = None
         return
@@ -125,43 +124,58 @@ class VideoSampler(VideoReader):
     def gen_sampling_schedule_using_frame_indices(self,
                                                   start_frame=None,
                                                   end_frame=None,
-                                                  samples_per_second=1):
+                                                  samples_per_second=1,
+                                                  reset_sample_index=True):
 
         if start_frame is None:
             start_frame = 0
         else:
-            assert isinstance(start_frame, int), "Start Frame index ({}) should be an integer".format(start_frame)
-            assert (start_frame >= 0), "Start Frame index ({}) should be greater than 0".format(start_frame)
-            assert (start_frame < self.vid_num_frames), "Start Frame index ({}) should be lesser than the total number of video frames ({})".format(start_frame, self.vid_num_frames)
+            if not isinstance(start_frame, int):
+                raise Exception("Start Frame index ({}) should be an integer".format(start_frame))
+            if start_frame < 0:
+                raise Exception("Start Frame index ({}) should be greater than 0".format(start_frame))
+            if start_frame >= self.vid_num_frames:
+                raise Exception("Start Frame index ({}) should be lesser than the total number of video frames ({})".format(start_frame, self.vid_num_frames))
 
         self.start_frame = start_frame
         self.start_time = float(self.start_frame) / self.vid_fps
 
 
-
-        assert (isinstance(samples_per_second, int)) or (isinstance(samples_per_second, float)), "Samples per second ({}) should be a number".format(samples_per_second)
-        assert samples_per_second > 0, "Samples per second ({}) should be greater than 0".format(samples_per_second)
-        assert samples_per_second <= self.vid_fps, "Samples per second ({}) should be less than the video FPS ({})".format(samples_per_second, self.vid_fps)
+        if not (isinstance(samples_per_second, int)) or (isinstance(samples_per_second, float)):
+            raise Exception("Samples per second ({}) should be a number".format(samples_per_second))
+        if samples_per_second <= 0:
+            raise Exception("Samples per second ({}) should be greater than 0".format(samples_per_second))
+        if samples_per_second > self.vid_fps:
+            raise Exception("Samples per second ({}) should be less than the video FPS ({})".format(samples_per_second, self.vid_fps))
 
         self.sample_step = math.floor(float(self.vid_fps) / samples_per_second)
+        self.sample_time_diff = float(self.sample_step) / self.vid_fps
 
 
         if end_frame is None:
             end_frame = self.vid_num_frames
         else:
-            assert isinstance(end_frame, int), "End Frame index ({}) should be an integer".format(end_frame)
-            assert (end_frame >= start_frame), "End Frame index ({}) should be greater than Start Frame index ({})".format(end_frame, start_frame)
-            assert (end_frame < self.vid_num_frames), "End Frame index ({}) should be lesser than the total number of video frames ({})".format(end_frame, self.vid_num_frames)
+            if not isinstance(end_frame, int):
+                raise Exception("End Frame index ({}) should be an integer".format(end_frame))
+            if end_frame < start_frame:
+                raise Exception("End Frame index ({}) should be greater than Start Frame index ({})".format(end_frame, start_frame))
+            if end_frame >= self.vid_num_frames:
+                raise Exception("End Frame index ({}) should be lesser than the total number of video frames ({})".format(end_frame, self.vid_num_frames))
 
-        self.num_samples = math.ceil(float(end_frame - self.start_frame) / self.sample_step)
+
+        self.num_samples = math.ceil(float(end_frame - self.start_frame + 1) / self.sample_step)
 
         # self.end_frame is set now, because the sample_step series might not match
         # the input end_frame. Hence, it is set by "calculating" the last frame
         self.end_frame = self.start_frame + ((self.num_samples-1) * self.sample_step)
+
         self.start_time = float(self.start_frame) / self.vid_fps
+        self.end_time = float(self.end_frame) / self.vid_fps
 
-
-        self.curr_sample_index = None     # `None` implies video has not been sampled yet
+        if reset_sample_index:
+            self.curr_sample_index = None     # `None` implies video has not been sampled yet
+        else:
+            self.curr_sample_index = self._calc_sample_index_by_frame(self.curr_frame_index)
 
         self.is_sampling_generated = True
 
@@ -170,27 +184,38 @@ class VideoSampler(VideoReader):
     def gen_sampling_schedule_using_time(self,
                                          start_time=None,
                                          end_time=None,
-                                         samples_per_second=1):
+                                         samples_per_second=1,
+                                         reset_sample_index=True):
 
         if start_time is None:
             start_time = 0.0
         else:
-            assert (isinstance(start_time, int)) or (isinstance(start_time, float)), "Start Time ({}) should be a number".format(start_time)
-            assert (start_time >= 0), "Start Time ({}) should be greater than 0".format(start_time)
-            assert (start_time < self.vid_duration_time), "Start Time ({}) should be lesser than the total video duration ({})".format(start_time, self.vid_duration_time)
+            if not (isinstance(start_time, int) or isinstance(start_time, float)):
+                raise Exception("Start Time ({}) should be a number".format(start_time))
+            if start_time < 0:
+                raise Exception("Start Time ({}) should be greater than 0".format(start_time))
+            if start_time >= self.vid_duration_time:
+                raise Exception("Start Time ({}) should be lesser than the total video duration ({})".format(start_time, self.vid_duration_time))
+
+
 
 
         if end_time is None:
-            end_time = self.vid_duration_time
+            end_time = self.vid_duration_time - (1.0 / self.vid_fps)    # i.e. the smallest time difference before end of video
         else:
-            assert (isinstance(end_time, int)) or (isinstance(end_time, float)), "End Time ({}) should be a number".format(end_time)
-            assert (end_time >= start_time), "End Time ({}) should be greater than Start Time ({})".format(end_time, start_time)
-            assert (end_time < self.vid_duration_time), "End Time ({}) should be lesser than the total video duration ({})".format(end_time, self.vid_duration_time)
+            if not (isinstance(end_time, int) or isinstance(end_time, float)):
+                raise Exception("End Time ({}) should be a number".format(end_time))
+            if end_time < start_time:
+                raise Exception("End Time ({}) should be greater than Start Time ({})".format(end_time, start_time))
+            if end_time >= self.vid_duration_time:
+                raise Exception("End Time ({}) should be lesser than the total video duration ({})".format(end_time, self.vid_duration_time))
 
-        start_frame = start_time * self.vid_fps
-        end_frame = end_time * self.vid_fps
+        start_frame = math.floor(start_time * self.vid_fps)
+        end_frame = math.floor(end_time * self.vid_fps)
 
-        self.gen_sampling_schedule_using_frame_indices(start_frame, end_frame, samples_per_second)
+        self.gen_sampling_schedule_using_frame_indices(start_frame, end_frame,
+                                                       samples_per_second,
+                                                       reset_sample_index)
 
         return
 
@@ -201,10 +226,18 @@ class VideoSampler(VideoReader):
 
 
     def _calc_frame_by_sample_index(self, sample_index):
-        return self.start_frame + (sample_index * self.sample_step)
+        return math.floor(self.start_frame + (sample_index * self.sample_step))
+
+    def _calc_sample_index_by_frame(self, frame_index):
+        return float(frame_index - self.start_frame) / self.sample_step
 
 
-    def get_next_sample(self):
+    def get_next_sample(self,
+                        update_curr_sample_index=True):
+
+        if not self.is_sampling_generated:
+            warnings.warn("Requesting next sample, but a sampling subset has not been initialised!")
+            return False, None
 
         # ----------------------------------------------------------------------
         # curr_sample_index need not be an integer; it can be a float (because
@@ -212,13 +245,8 @@ class VideoSampler(VideoReader):
         # outside the standard sampling step). Thus, we need a slightly
         # complicated way to determine the next sampling index
         # ----------------------------------------------------------------------
-
-
-
-
-
-        # Less than 0; it means this will be the starting sample
-        if self.curr_sample_index < 0:
+        # NONE, or less than 0; it means this will be the starting sample
+        if (self.curr_sample_index is None) or self.curr_sample_index < 0:
             next_sample_index = 0
 
         # More than num_samples: It is already outside the valid range, will error out later
@@ -238,15 +266,8 @@ class VideoSampler(VideoReader):
                 next_sample_index = math.ceil(self.curr_sample_index)
 
 
-        if next_sample_index > (self.num_samples - 1):
-            success = False
-            frame = None
-        else:
-            next_frame_index = self._calc_frame_by_sample_index(next_sample_index)
-            frame = self.get_frame_by_index(next_frame_index)
-            success = True
-
-            self.curr_sample_index = next_frame_index
+        success, frame = self.get_sample_by_index(next_sample_index,
+                                                  update_curr_sample_index)
 
         return success, frame
 
@@ -254,29 +275,36 @@ class VideoSampler(VideoReader):
 
     def get_sample_by_index(self, sample_index,
                             update_curr_sample_index=True):
-        assert sample_index <= (self.num_samples - 1), "Target sample index ({}) is outside the number of possible samples ({})".format(sample_index, self.num_samples)
+        frame = None
+        success = False
 
-        frame_index = self.start_frame + (sample_index * self.sample_step)
-        frame = self.get_frame_by_index(frame_index)
-        if update_curr_sample_index:
-            self.curr_sample_index = float(self.curr_frame_index - self.start_frame) / self.vid_fps
-        return frame
+        if not self.is_sampling_generated:
+            warnings.warn("Requesting sample at index {}, but a sampling subset has not been initialised!".format(sample_index))
+        elif (sample_index < 0) or (sample_index >= self.num_samples):
+            warnings.warn("Target sample index ({}) is outside the number of possible samples ({})".format(sample_index, self.num_samples))
+        else:
+            frame_index = self._calc_frame_by_sample_index(sample_index)
+            success, frame = self.get_frame_by_index(frame_index, update_curr_sample_index)
+
+        return success, frame
+
+
 
 
     def get_frame_by_index(self, frame_index,
                            update_curr_sample_index=True):
-        frame = super().get_frame_by_index(frame_index)
-        if update_curr_sample_index:
-            self.curr_sample_index = float(self.curr_frame_index - self.start_frame) / self.vid_fps
-        return frame
+        success, frame = super().get_frame_by_index(frame_index)
+        if success and update_curr_sample_index:
+            self.curr_sample_index = self._calc_sample_index_by_frame(self.curr_frame_index)
+        return success, frame
 
 
     def get_frame_by_time(self, target_time,
                           update_curr_sample_index=True):
-        frame = super().get_frame_by_time(target_time)
-        if update_curr_sample_index:
-            self.curr_sample_index = float(self.curr_frame_index - self.start_frame) / self.vid_fps
-        return frame
+        success, frame = super().get_frame_by_time(target_time)
+        if success and update_curr_sample_index:
+            self.curr_sample_index = self._calc_sample_index_by_frame(self.curr_frame_index)
+        return success, frame
 
 
 
