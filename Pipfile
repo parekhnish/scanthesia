@@ -6,6 +6,8 @@ verify_ssl = true
 [dev-packages]
 ipython = "*"
 matplotlib = "*"
+pytest = "*"
+coverage = "*"
 
 [packages]
 imageio = "*"
