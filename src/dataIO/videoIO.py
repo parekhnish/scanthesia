@@ -229,7 +229,14 @@ class VideoSampler(VideoReader):
         return math.floor(self.start_frame + (sample_index * self.sample_step))
 
     def _calc_sample_index_by_frame(self, frame_index):
-        return float(frame_index - self.start_frame) / self.sample_step
+        sample_index = float(frame_index - self.start_frame) / self.sample_step
+
+        # Check if the calculated value is actually an integer or not, and
+        # return appropriately
+        if sample_index.is_integer():
+            return int(sample_index)
+        else:
+            return sample_index
 
 
     def get_next_sample(self,
