@@ -262,6 +262,35 @@ def test_vid_sampler_gen_sampling_normal(root_data_dir):
     return
 
 
+def test_vid_sampler_iterator(root_data_dir):
+    input_video_filename = os.path.join(root_data_dir, "videos",
+                                        "marioverehrer_minecraft.mp4")
+    vid_sampler = VideoSampler(input_video_filename)
+
+    # -------------------------------------------------------------------------
+    # 1) Generate sampling
+    vid_sampler.gen_sampling_schedule_using_frame_indices(start_frame=20, end_frame=120,
+                                                          samples_per_second=2,
+                                                          reset_sample_index=True)
+
+    # 2) Make the array of expected sample indices when iterating
+    expected_index_arr = np.arange(vid_sampler.num_samples).astype("int")
+
+    # 3) Actually iterate, and record the indices
+    index_list = []
+    for _ in vid_sampler:
+        index_list.append(vid_sampler.curr_sample_index)
+    run_index_arr = np.array(index_list)
+
+    # 4) Assert that expected indices match the indices recorded
+    assert np.all(expected_index_arr == run_index_arr)
+    # -------------------------------------------------------------------------
+
+    vid_sampler.close_sampler()
+
+    return
+
+
 def test_vid_sampler_gen_sampling_abnormal(root_data_dir):
     input_video_filename = os.path.join(root_data_dir, "videos",
                                         "marioverehrer_minecraft.mp4")

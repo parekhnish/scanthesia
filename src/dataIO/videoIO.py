@@ -307,6 +307,20 @@ class VideoSampler(VideoReader):
         return success, frame
 
 
+    def __iter__(self):
+        return self
+
+
+    def __next__(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            success, frame = self.get_next_sample(update_curr_sample_index=True)
+            if success:
+                return frame
+            else:
+                raise StopIteration
+
+
 
     def close_sampler(self):
         self.close_reader()
