@@ -12,6 +12,7 @@ coverage = "*"
 [packages]
 imageio = "*"
 imageio-ffmpeg = "*"
+scikit-image = "*"
 
 [requires]
 python_version = "3.8"
