@@ -19,6 +19,7 @@ def crop_frame(full_frame,
     if bottom_row is None:
         bottom_row = orig_num_rows
 
+    # Checks for Row limits
     if top_row < 0 or top_row >= orig_num_rows:
         raise Exception("Frame crop: top row {} outside limits: [0, {}]".format(top_row, orig_num_rows-1))
     if bottom_row < 1 or bottom_row > orig_num_rows:
@@ -33,6 +34,7 @@ def crop_frame(full_frame,
     if right_col is None:
         right_col = orig_num_cols
 
+    # Checks for Column limits
     if left_col < 0 or left_col >= orig_num_cols:
         raise Exception("Frame crop: left column {} outside limits: [0, {}]".format(left_col, orig_num_cols-1))
     if right_col < 1 or right_col > orig_num_cols:
@@ -73,6 +75,8 @@ def convert_frame_to_grayscale(frame):
 def binarise_frame(frame,
                    thresh):
 
+    # Binarisation is typically done for grayscale images only
+    # If input image is 3D (i.e. color), first convert it to grayscale
     if frame.ndim > 2:
         gray_frame = convert_frame_to_grayscale(frame)
     else:
