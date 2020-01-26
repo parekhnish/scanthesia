@@ -1,12 +1,7 @@
 import sys
-import traceback
 
 import numpy as np
 from skimage.color import rgb2gray
-from skimage.filters import threshold_otsu
-
-
-DEFAULT_BIN_THRESH_METHOD = "otsu"
 
 
 def crop_frame(full_frame,
